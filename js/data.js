@@ -1,5 +1,5 @@
 window.RP = (() => {
-  const CONFIG={storageKey:'rescuepad.db.v1',legacyStorageKey:'rescuepad.demo.v1',xHandle:'rescuepad',xUrl:'https://x.com/rescuepad',version:1,tradingFee:0.01,split:{rescue:0.5,creator:0.4,platform:0.1},solEUR:140,solUSD:150,startingBalance:5,startingMC:5000,tokenSupply:1e9,graduationMC:50000,graduationInterval:5000,graduationPercentPerMinute:0.9,rescueMilestonesEUR:[100,250,500],useOfficialImages:false,rpcUrl:'https://api.mainnet-beta.solana.com',activityInterval:28000};
+  const CONFIG={storageKey:'rescuepad.db.v1',legacyStorageKey:'rescuepad.demo.v1',xHandle:'rescuepad_',xUrl:'https://x.com/rescuepad_',version:1,tradingFee:0.01,split:{rescue:0.5,creator:0.4,platform:0.1},solEUR:140,solUSD:150,startingBalance:5,startingMC:5000,tokenSupply:1e9,graduationMC:50000,graduationInterval:5000,graduationPercentPerMinute:0.9,rescueMilestonesEUR:[100,250,500],useOfficialImages:false,rpcUrl:'https://api.mainnet-beta.solana.com',activityInterval:28000};
   const seed=[
     ['biscuit','Biscuit','BISCUIT','paws',78.4,24820,58,'dog','#d6b180','#8198b5','glasses','Internet dog helping real dogs. Zero thoughts. Good intentions.'],
     ['miso','Miso','MISO','scars',69.1,18760,52,'cat','#e5a158','#bea1c1','desk','The cat has opened a trading account. Nobody tell him.'],
