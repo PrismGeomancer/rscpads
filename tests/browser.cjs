@@ -1,0 +1,105 @@
+// Optional end-to-end QA. The app itself has no npm dependencies.
+// Run with an installed Playwright module; see README.md.
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+const assert=require('node:assert/strict');
+const path=require('node:path');
+const fs=require('node:fs');
+const output=process.env.QA_OUTPUT||'/tmp/rescuepad-qa';
+const origin=process.env.PREVIEW_URL||'http://127.0.0.1:4173';
+fs.mkdirSync(output,{recursive:true});
+(async()=>{
+ const browser=await chromium.launch({headless:true,...(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{})});
+ const context=await browser.newContext({viewport:{width:1440,height:1000}});
+ // Freeze background demo ticks for deterministic financial assertions.
+ await context.addInitScript(()=>{window.setInterval=(callback,delay)=>{if(delay===28000)window.__demoTick=callback;return 0;};Object.defineProperty(navigator,'clipboard',{value:{writeText:async value=>{window.__copied=value;}}});});
+ await context.addInitScript(require('./wallet-fixture.cjs'));
+ const page=await context.newPage(),errors=[],checks=[];
+ page.on('pageerror',err=>errors.push(err.message));
+ const check=(name)=>{checks.push(name);console.log('PASS:',name);};
+ const state=()=>page.evaluate(()=>JSON.parse(JSON.stringify(RP.state)));
+ async function go(hash){await page.goto(origin+'/#'+hash);await page.waitForSelector('#main > *');if(await page.evaluate(()=>Object.keys(RP.state.accounts).length>0))await page.evaluate(()=>Wallet.connect('Phantom'));}
+ await go('home');
+ assert.equal(await page.locator('.token-card').count(),6);
+ assert.ok((await page.locator('#platform-stats').innerText()).includes('€620.00'));
+ await page.screenshot({path:path.join(output,'desktop.png'),fullPage:true});
+ check('Populated homepage with consistent early-platform statistics');
+ await page.locator('#wallet-button').click();await page.locator('[data-provider=Phantom]').click();
+ assert.equal((await state()).wallet.provider,'Phantom');assert.equal(await page.locator('#modal').isVisible(),false);
+ const address=(await state()).wallet.address;
+ await page.reload();assert.equal((await state()).wallet,null);await page.evaluate(()=>Wallet.connect('Phantom'));assert.equal((await state()).wallet.address,address);
+ check('Wallet approval, refresh session clearing and profile persistence');
+ await page.locator('#wallet-button').click();await page.locator('[data-action=copy-wallet]').click();
+ assert.equal(await page.evaluate(()=>window.__copied),address);
+ await page.locator('[data-action=disconnect]').click();assert.equal((await state()).wallet,null);
+ for(const provider of ['Solflare','Backpack']){await page.locator('#wallet-button').click();await page.locator(`[data-provider=${provider}]`).click();assert.equal((await state()).wallet.provider,provider);assert.equal((await state()).wallet.address,address);if(provider==='Solflare'){await page.locator('#wallet-button').click();await page.locator('[data-action=disconnect]').click();}}
+ check('Copy, disconnect and reconnect with all three injected providers');
+ await go('profile');assert.equal(await page.locator('.profile-top').count(),1);assert.ok((await page.locator('#main').innerText()).includes('5.0000 SOL · TRADING BALANCE'));
+ check('Connected profile and empty-state actions');
+ await go('rescues');assert.equal(await page.locator('.rescue-card').count(),8);
+ for(const [country,count] of [['Greece',4],['Spain',2],['Italy',1],['Portugal',1],['All',8]]){await page.locator(`[data-country=${country}]`).click();assert.equal(await page.locator('.rescue-card').count(),count);}
+ check('All shelter country filters');
+ for(const id of ['paws','scars','stray','refugio','anerpa','enpa','apca','sgs']){await go('rescue/'+id);const href=await page.locator('a.button[target=_blank]').getAttribute('href');assert.ok(href.startsWith('https://'));assert.ok((await page.locator('#main').innerText()).includes('RESCUEPAD ACTIVITY'));}
+ check('Eight shelter profiles and official website links');
+ await go('launch/paws');
+ await page.locator('#token-name').fill('Test Scruff');await page.locator('#token-ticker').fill('scruff');await page.locator('#token-description').fill('A very good test dog.');
+ await page.locator('#token-image').setInputFiles({name:'test.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==','base64')});
+ await page.waitForFunction(()=>RP.state.draft.image.startsWith('data:image/'));
+ assert.ok((await page.locator('#upload-preview').getAttribute('src')).startsWith('data:image/'));
+ await page.reload();await page.evaluate(()=>Wallet.connect('Phantom'));assert.equal(await page.locator('#token-name').inputValue(),'Test Scruff');assert.equal(await page.locator('#token-ticker').inputValue(),'SCRUFF');
+ await page.locator('#launch-form button[type=submit]').click();
+ assert.equal((await state()).draft.step,2);assert.equal((await state()).draft.rescueId,'paws');
+ await page.locator('[data-launch-country=Greece]').click();
+ await page.locator('[data-select-rescue=scars]').click();assert.equal((await state()).draft.rescueId,'scars');
+ await page.locator('#launch-form button[type=submit]').click();
+ const feeText=await page.locator('.launch-form').innerText();assert.ok(feeText.includes('50%')&&feeText.includes('40%')&&feeText.includes('10%')&&feeText.includes('1%'));
+ await page.locator('#launch-form button[type=submit]').click();assert.equal((await state()).draft.step,4);
+ await page.locator('#launch-form button[type=submit]').click();
+ await page.waitForFunction(()=>RP.state.tokens.some(t=>t.ticker==='SCRUFF'));
+ await page.waitForSelector('.success-art');
+ let data=await state();const created=data.tokens.find(t=>t.ticker==='SCRUFF');
+ assert.equal(created.rescueId,'scars');assert.equal(created.owner,address);assert.equal(created.trades,0);assert.equal(created.mc,5000);assert.ok(created.image.startsWith('data:image/'));
+ check('Four-step launch, image upload, saved draft, selection change, fee configuration and simulated launch');
+ await page.locator('.navbar nav a[href="#launch"]').click();await page.waitForSelector('#token-name');assert.equal((await state()).draft.step,1);check('Launch navigation returns to a fresh form after success');
+ await go('explore');assert.equal(await page.locator('.token-card').count(),13);await page.locator('[data-tab=new]').click();assert.ok((await page.locator('.token-card').first().innerText()).includes('SCRUFF'));
+ await page.locator('#meme-search').fill('scruff');assert.equal(await page.locator('.token-card').count(),1);
+ await page.locator('#meme-search').fill('no-such-meme');assert.equal(await page.locator('.token-card').count(),0);await page.locator('#meme-search').fill('');
+ for(const tab of ['trending','fees','graduation'])await page.locator(`[data-tab=${tab}]`).click();
+ await go('profile');assert.ok((await page.locator('#main').innerText()).includes('$SCRUFF'));
+ check('New token appears in discovery and profile; search and all discovery sorts');
+ await go('token/'+created.id);
+ const before=await state();
+ await page.locator('[data-preset="0.5"]').click();await page.locator('#trade-form button[type=submit]').click();
+ data=await state();const acct=data.accounts[address],token=data.tokens.find(t=>t.id===created.id);
+ assert.equal(acct.balance,4.5);assert.ok(acct.holdings[created.id]>0);assert.equal(token.trades,1);assert.equal(token.rescueCents,35);assert.ok(token.mc>5000);assert.ok(token.volumeSOL>.49);assert.ok(token.chart.length>before.tokens.find(t=>t.id===created.id).chart.length);
+ assert.ok((await page.locator('.stats').innerText()).includes('€0.35'));
+ check('Buy updates SOL, holdings, chart, market cap, volume, trades and rescue fees');
+ await page.locator('#trade-amount').fill('6');await page.locator('#trade-form button[type=submit]').click();assert.ok((await page.locator('#trade-error').innerText()).includes('Not enough'));assert.equal((await state()).accounts[address].balance,4.5);
+ await page.locator('[data-trade-side=sell]').click();await page.locator('[data-preset="0.1"]').click();await page.locator('#trade-form button[type=submit]').click();
+ data=await state();assert.ok(Math.abs(data.accounts[address].balance-4.599)<1e-9);assert.ok(data.accounts[address].holdings[created.id]<acct.holdings[created.id]);assert.equal(data.tokens.find(t=>t.id===created.id).rescueCents,42);
+ await page.locator('[data-preset=max]').click();await page.locator('#trade-form button[type=submit]').click();assert.ok((await state()).accounts[address].holdings[created.id]<10);
+ check('Insufficient-balance protection, sell accounting and Sell Max');
+ const totals=await page.evaluate(()=>({rescues:RESCUES.reduce((n,r)=>n+RP.rescueStats(r.id).cents,0),tokens:RP.totals().cents,scars:RP.rescueStats('scars').cents}));assert.equal(totals.rescues,totals.tokens);
+ await go('rescue/scars');assert.ok((await page.locator('#main').innerText()).includes((totals.scars/100).toFixed(2)));
+ await go('leaderboard');assert.ok((await page.locator('#main').innerText()).includes((totals.scars/100).toFixed(2)));
+ await go('profile');assert.ok((await page.locator('#main').innerText()).includes('Bought $SCRUFF'));
+ await page.reload();assert.equal((await state()).accounts[address].history.length,3);assert.equal((await state()).tokens.length,13);
+ check('Shelter totals, leaderboard and activity agree; trades and uploaded images persist');
+ await go('token/'+created.id);await page.locator('[data-chart-range=recent]').click();await page.locator('[data-action=copy-contract]').click();assert.equal(await page.evaluate(()=>window.__copied),created.contract);
+ await go('docs');assert.equal(await page.locator('.docs article').count(),6);
+ assert.equal(await page.locator('footer [data-social]').getAttribute('href'),'https://x.com/rescuepad');assert.equal(await page.locator('.nav-social').getAttribute('target'),'_blank');
+ check('Chart ranges, contract copy, docs and X links');
+ for(const width of [390,320]){await page.setViewportSize({width,height:844});for(const route of ['home','explore','rescues','leaderboard','profile','launch','token/biscuit','rescue/paws','docs']){await go(route);const dims=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));assert.equal(dims.scroll,dims.width,`${route} at ${width}px should not overflow`);}if(width===390){await go('home');await page.screenshot({path:path.join(output,'mobile.png'),fullPage:true});}}
+ check('Every page fits 390px and 320px mobile viewports');
+ await page.setViewportSize({width:1440,height:1000});await go('home');
+ const images=await page.evaluate(async()=>{await Promise.all([...document.images].map(i=>i.decode().catch(()=>{})));return [...document.images].every(i=>i.naturalWidth>0);});assert.ok(images);
+ await page.locator('#wallet-button').click();await page.keyboard.press('Escape');assert.equal(await page.locator('#modal').isVisible(),false);
+ const beforeTick=await page.evaluate(()=>RP.totals());await page.evaluate(()=>window.__demoTick());const afterTick=await page.evaluate(()=>RP.totals());assert.equal(afterTick.trades,beforeTick.trades+1);assert.ok(afterTick.cents>beforeTick.cents);assert.ok((await page.locator('#live-feed').innerText()).includes('anon bought'));check('Live anonymous activity updates the shared data and visible feed');
+ assert.equal(await page.locator('[data-action=reset],[data-action=confirm-reset]').count(),0);
+ check('Original images load, Escape closes dialog, no reset controls exposed');
+ await page.goto('file://'+path.resolve(__dirname,'../index.html'));assert.equal(await page.locator('.token-card').count(),6);await page.locator('#wallet-button').click();await page.locator('[data-provider=Phantom]').click();assert.ok((await state()).wallet);await page.locator('.navbar nav a[href="#rescues"]').click();await page.locator('.rescue-card').first().waitFor();assert.equal(await page.locator('.rescue-card').count(),8);
+ check('Direct file opening works without a server or build process');
+ assert.deepEqual(errors,[]);
+ check('No uncaught browser JavaScript errors');
+ fs.writeFileSync(path.join(output,'results.json'),JSON.stringify({checks,errors},null,2));
+ await browser.close();console.log(`\n${checks.length} check groups passed. Screenshots: ${output}`);
+})().catch(err=>{console.error(err);process.exit(1);});

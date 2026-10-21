@@ -1,0 +1,65 @@
+// Focused browser checks for milestones, personal rescue support and live preview.
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+const assert=require('node:assert/strict');
+const path=require('node:path');
+const fs=require('node:fs');
+const output=process.env.QA_OUTPUT||'/tmp/rescuepad-features';
+fs.mkdirSync(output,{recursive:true});
+(async()=>{
+ const browser=await chromium.launch({headless:true,...(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{})});
+ const context=await browser.newContext({viewport:{width:1440,height:1000}});
+ await context.addInitScript(()=>{window.setInterval=()=>0;});
+ await context.addInitScript(require('./wallet-fixture.cjs'));
+ const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ const base='file://'+path.resolve(__dirname,'../index.html');
+ const go=async route=>{await page.goto(base+'#'+route);await page.waitForSelector('#main > *');if(await page.evaluate(()=>Object.keys(RP.state.accounts).length>0))await page.evaluate(()=>Wallet.connect('Phantom'));};
+ await go('rescues');assert.equal(await page.locator('.rescue-card .milestone-progress').count(),8);
+ await go('rescue/paws');assert.equal(await page.locator('.milestone-step.reached').count(),1);assert.ok((await page.locator('.milestone-panel').innerText()).includes('€250'));
+ await page.screenshot({path:path.join(output,'rescue-milestones-desktop.png'),fullPage:true});
+ await page.locator('#wallet-button').click();await page.locator('[data-provider=Phantom]').click();
+ await go('profile');assert.ok((await page.locator('#supported-rescues').innerText()).includes('Pick your first rescue.'));
+ // Stage a rescue just below the first threshold, then cross it with a real UI trade.
+ await page.evaluate(()=>RP.change(()=>{RP.token('biscuit').rescueCents=9993-RP.token('paros').rescueCents;}));
+ await go('token/biscuit');await page.locator('#trade-amount').fill('0.1');await page.locator('#trade-form button[type=submit]').click();
+ await go('rescue/paws');assert.equal(await page.locator('.milestone-progress').getAttribute('data-allocation-cents'),'10000');assert.equal(await page.locator('.milestone-step.reached').count(),1);assert.ok((await page.locator('.milestone-caption').innerText()).includes('€150.00 to go'));
+ await page.evaluate(()=>RP.change(()=>{RP.token('biscuit').rescueCents=50000-RP.token('paros').rescueCents;}));
+ await page.reload();await page.evaluate(()=>Wallet.connect('Phantom'));assert.equal(await page.locator('.milestone-step.reached').count(),3);assert.ok((await page.locator('.milestone-panel').innerText()).includes('ALL MILESTONES REACHED'));assert.equal(await page.locator('.milestone-panel [role=progressbar]').getAttribute('aria-valuenow'),'100');
+ console.log('PASS: rescue card milestones, threshold crossed by trading, next target, all-target completion and refresh.');
+ await go('launch/paws');const preview=page.locator('#launch-card-preview');
+ assert.ok((await preview.innerText()).includes('PAWS Paros'));
+ await page.locator('#token-name').fill('Scruffy Preview');assert.ok((await preview.innerText()).includes('Scruffy Preview'));
+ await page.locator('#token-ticker').fill('scruffp');assert.ok((await preview.innerText()).includes('$SCRUFFP'));
+ await page.locator('#token-description').fill('A dog with excellent intentions.');assert.ok((await preview.innerText()).includes('A dog with excellent intentions.'));
+ assert.equal(await page.evaluate(()=>document.activeElement.id),'token-description');
+ await page.locator('#token-image').setInputFiles({name:'test.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==','base64')});
+ await page.waitForFunction(()=>RP.state.draft.image.startsWith('data:image/'));
+ const uploaded=await page.evaluate(()=>RP.state.draft.image);assert.equal(await preview.locator('img').getAttribute('src'),uploaded);
+ await page.locator('[data-launch-action=remove-image]').click();assert.ok((await preview.locator('img').getAttribute('src')).startsWith('data:image/svg+xml'));
+ await page.locator('#token-description').fill('<img src=x onerror=alert(1)>');assert.equal(await preview.locator('.preview-description img').count(),0);assert.ok((await preview.innerText()).includes('<img src=x onerror=alert(1)>'));
+ await page.locator('#token-description').fill('A dog with excellent intentions.');
+ await page.screenshot({path:path.join(output,'launch-preview-desktop.png'),fullPage:true});
+ await page.reload();await page.evaluate(()=>Wallet.connect('Phantom'));assert.ok((await preview.innerText()).includes('$SCRUFFP'));
+ await page.locator('#launch-form button[type=submit]').click();await page.locator('[data-select-rescue=scars]').click();assert.ok((await preview.innerText()).includes('SCARS'));assert.equal(await preview.locator('.preview-fee-share .accent').innerText(),'50%');
+ for(let i=0;i<2;i++){await page.locator('#launch-form button[type=submit]').click();assert.equal(await preview.count(),1);}
+ await page.locator('#launch-form button[type=submit]').click();await page.waitForSelector('.success-art');
+ const own=await page.evaluate(()=>RP.state.tokens.find(t=>t.ticker==='SCRUFFP'));
+ console.log('PASS: live name, ticker, description, escaped content, image upload/removal, rescue selection, fee share and persistent preview across launch steps.');
+ await go('token/'+own.id);await page.locator('#trade-amount').fill('0.5');await page.locator('#trade-form button[type=submit]').click();
+ await go('token/miso');await page.locator('#trade-amount').fill('0.25');await page.locator('#trade-form button[type=submit]').click();
+ await go('profile');assert.equal(await page.locator('.user-rescue-card').count(),2);
+ const scars=page.locator('.user-rescue-card[data-rescue-id=scars]');
+ assert.equal(await scars.locator('.user-rescue-amount strong').innerText(),'€0.53');assert.equal(await scars.locator('.supporting-token-links a').count(),2);assert.ok((await scars.innerText()).includes('launched'));assert.ok((await scars.innerText()).includes('traded'));
+ const sum=await page.evaluate(()=>RP.userRescueSupport().reduce((n,row)=>n+row.cents,0));assert.equal(sum,60);
+ await page.evaluate(()=>RP.change(()=>RP.market(RP.token(RP.state.tokens.find(t=>t.ticker==='SCRUFFP').id),'buy',.1)));
+ await page.reload();await page.evaluate(()=>Wallet.connect('Phantom'));assert.equal(await scars.locator('.user-rescue-amount strong').innerText(),'€0.60');
+ await page.screenshot({path:path.join(output,'profile-support-desktop.png'),fullPage:true});
+ await scars.locator('.user-rescue-link').click();assert.ok(page.url().endsWith('#rescue/scars'));
+ await go('profile');await page.locator('.user-rescue-card[data-rescue-id=scars] .supporting-token-links a').first().click();assert.ok(page.url().includes('#token/'));
+ console.log('PASS: grouped personal rescues, supporting meme links, launched/traded distinction, fee totals without duplicate counting and ongoing owned-token allocation updates.');
+ for(const width of [1440,768,390,320]){await page.setViewportSize({width,height:844});for(const route of ['profile','rescues','rescue/paws','launch']){await go(route);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth),width,route+' at '+width);}}
+ await page.setViewportSize({width:390,height:844});await go('profile');await page.screenshot({path:path.join(output,'profile-support-mobile.png'),fullPage:true});
+ await go('launch');assert.ok(await page.locator('.status-bar>span').first().isVisible());await page.screenshot({path:path.join(output,'launch-preview-mobile.png'),fullPage:true});
+ await go('profile');assert.equal(await page.locator('[data-action=reset],[data-action=confirm-reset]').count(),0);await page.evaluate(async()=>{await Wallet.disconnect();RP.reset();UI.render();});
+ await page.waitForFunction(()=>RP.state.wallet===null);assert.equal(await page.evaluate(()=>RP.userRescueSupport().length),0);
+ assert.deepEqual(errors,[]);await browser.close();console.log('PASS: desktop/tablet/mobile layouts, internal reset and no browser errors.');
+})().catch(err=>{console.error(err);process.exit(1);});

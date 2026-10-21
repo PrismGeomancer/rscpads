@@ -1,0 +1,72 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>RescuePad — launch film</title>
+    <style>
+        html,
+        body {
+            margin: 0;
+            background: #141414
+        }
+
+        canvas {
+            display: block;
+            width: 1080px;
+            height: 1080px
+        }
+    </style>
+</head>
+
+<body><canvas id="film" width="1080" height="1080"></canvas>
+    <script src="../js/art.js"></script>
+    <script>
+        const canvas = document.querySelector('canvas'), ctx = canvas.getContext('2d');
+        const cream = '#efe8d8', beige = '#e8dcc5', muted = '#aaa69e', ink = '#141414';
+        const specs = [{ kind: 'dog', color: '#d6b180', bg: '#8198b5', accessory: 'glasses' }, { kind: 'cat', color: '#e5a158', bg: '#bea1c1', accessory: 'desk' }, { kind: 'dog', color: '#ddc9a4', bg: '#bcb2cd', accessory: 'rocket' }];
+        const imgs = []; const load = src => new Promise(resolve => { const im = new Image; im.onload = () => resolve(im); im.src = src; });
+        window.ready = Promise.all([...specs.map(x => load(Art.uri(Art.token(x)))), load('../assets/wordmark.svg'), load('../assets/icon.svg'), load(Art.uri(Art.rescue({ color: '#a6b69b', art: 'dog' })))]).then(a => imgs.push(...a));
+        const clamp = x => Math.max(0, Math.min(1, x)), ease = x => 1 - Math.pow(1 - clamp(x), 3);
+        function text(s, x, y, size = 72, color = cream, weight = 800, align = 'center') { ctx.fillStyle = color; ctx.font = `${weight} ${size}px Arial`; ctx.textAlign = align; ctx.textBaseline = 'middle'; ctx.fillText(s, x, y); }
+        function mono(s, x, y, size = 20, color = muted) { ctx.fillStyle = color; ctx.font = `500 ${size}px monospace`; ctx.textAlign = 'center'; ctx.fillText(s, x, y); }
+        function round(x, y, w, h, r, fill) { ctx.fillStyle = fill; ctx.beginPath(); ctx.roundRect(x, y, w, h, r); ctx.fill(); }
+        function picture(im, x, y, w, h, angle = 0) { ctx.save(); ctx.translate(x + w / 2, y + h / 2); ctx.rotate(angle); ctx.imageSmoothingEnabled = false; ctx.drawImage(im, -w / 2, -h / 2, w, h); ctx.restore(); }
+        function heart(x, y, s) { ctx.save(); ctx.translate(x, y); ctx.scale(s / 24, s / 24); ctx.fillStyle = beige; ctx.fill(new Path2D('M12 21L2 11V5H5V2H10V5H14V2H19V5H22V11Z')); ctx.restore(); }
+        function scene(t) {
+            ctx.fillStyle = ink; ctx.fillRect(0, 0, 1080, 1080);
+            // Slow moving, quiet pixel texture.
+            for (let i = 0; i < 28; i++) { const x = (i * 173 + Math.sin(t * .3 + i) * 18) % 1080, y = (i * 239 + t * 9) % 1080; ctx.fillStyle = i % 3 ? '#242321' : '#39342c'; ctx.fillRect(x, y, i % 3 ? 3 : 6, i % 3 ? 3 : 6); }
+            picture(imgs[4], 62, 60, 44, 44); mono('RESCUEPAD', 205, 87, 20, beige); mono('A MEME WITH A MISSION', 826, 87, 17);
+            const boundaries = [0, 2.6, 5.2, 7.6, 10]; let k = boundaries.findIndex((v, i) => t >= v && t < boundaries[i + 1]); if (k < 0) k = 3;
+            const u = t - boundaries[k], duration = boundaries[k + 1] - boundaries[k], a = ease(u / .32) * clamp((duration - u) / .22);
+            ctx.save(); ctx.globalAlpha = a; ctx.translate(0, 25 * (1 - ease(u / .55)));
+            if (k === 0) {
+                mono('BIG MEME ENERGY.', 540, 218, 22, beige); text('Launch memes.', 540, 326, 94);
+                for (let i = 0; i < 3; i++) { let x = 135 + i * 277, y = 465 + Math.sin(t * 2 + i) * 12; const enter = ease((u - i * .1) / .6); ctx.save(); ctx.globalAlpha *= enter; ctx.translate(0, 60 * (1 - enter)); round(x - 8, y - 8, 264, 332, 12, '#35322e'); picture(imgs[i], x, y, 248, 248, Math.sin(t * .9 + i) * .025); mono(['$BISCUIT', '$MISO', '$ROCKET'][i], x + 124, y + 293, 22, cream); ctx.restore(); }
+                text('Give your meme a purpose.', 540, 894, 35, muted, 400);
+            } else if (k === 1) {
+                mono('AN EVEN BIGGER PURPOSE.', 540, 218, 22, beige); text('Rescue animals.', 540, 326, 90);
+                round(105, 451, 870, 388, 14, '#35322e'); picture(imgs[5], 117, 463, 846, 376);
+                heart(801, 484, 54); heart(219, 548, 32);
+                text('Our mission: support animal rescues.', 540, 905, 34, cream, 400);
+            } else if (k === 2) {
+                mono('WHY WE EXIST', 540, 218, 22, beige); text('Meme culture.', 540, 325, 88); text('A rescue mission.', 540, 423, 88, beige);
+                const nodes = [{ x: 120, label: 'CREATE', im: imgs[0] }, { x: 447, label: 'CONNECT', im: imgs[4] }, { x: 774, label: 'CARE', im: imgs[1] }];
+                for (const [i, n] of nodes.entries()) { round(n.x, 558, 186, 202, 12, '#262523'); picture(n.im, n.x + 33, 582, 120, 120); mono(n.label, n.x + 93, 735, 19, cream); if (i < 2) { text('→', n.x + 256, 650, 54, beige); } }
+                text('Bring communities together', 540, 874, 36, cream, 400); text('around animals who need them.', 540, 925, 36, cream, 400);
+            } else {
+                const bounce = 1 + .025 * Math.sin(u * 2); ctx.save(); ctx.translate(540, 355); ctx.scale(bounce, bounce); picture(imgs[4], -91, -91, 182, 182); ctx.restore();
+                picture(imgs[3], 165, 494, 750, 138);
+                text('Launch memes. Rescue animals.', 540, 692, 43, cream, 700);
+                round(298, 787, 484, 84, 10, beige); text('Join the movement', 540, 830, 31, ink, 700);
+            }
+            ctx.restore();
+            ctx.fillStyle = '#38342e'; ctx.fillRect(62, 1014, 956, 3); ctx.fillStyle = beige; ctx.fillRect(62, 1014, 956 * clamp(t / 10), 3);
+        }
+        window.drawFrame = async t => { await window.ready; scene(t); return canvas.toDataURL('image/png').split(',')[1]; };
+        window.ready.then(() => scene(8.7));
+    </script>
+</body>
+
+</html>

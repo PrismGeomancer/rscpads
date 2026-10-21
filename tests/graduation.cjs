@@ -1,0 +1,42 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const path=require('node:path');
+const {webcrypto}=require('node:crypto');
+const saved=new Map();let fail=false;
+function load(){const ctx=vm.createContext({crypto:webcrypto,localStorage:{getItem:key=>saved.get(key)||null,setItem:(key,value)=>{if(fail)throw Error('quota');saved.set(key,value);}},window:null});ctx.window=ctx;for(const file of ['rescues.js','data.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'../js',file),'utf8'),ctx);return ctx.RP;}
+let rp=load();rp.change(state=>{state.wallet={provider:'Test',address:'test-account'};state.accounts['test-account']={balance:5,holdings:{},history:[],launches:[]};});const start=rp.state.tokens.map(t=>rp.graduation(t)),fees=rp.state.tokens.map(t=>t.rescueCents),volumes=rp.state.tokens.map(t=>t.volumeSOL),tradeCounts=rp.state.tokens.map(t=>t.trades);const accounts=JSON.stringify(rp.state.accounts);rp.advanceGraduation();
+assert.ok(rp.state.tokens.every((t,i)=>rp.graduation(t)>start[i]));
+assert.ok(rp.state.tokens.every((t,i)=>t.rescueCents>fees[i]&&t.volumeSOL>volumes[i]&&t.trades===tradeCounts[i]+1));
+for(const [i,t] of rp.state.tokens.entries())assert.equal(t.rescueCents-fees[i],Math.round((t.volumeSOL-volumes[i])*rp.CONFIG.solEUR*rp.CONFIG.tradingFee*rp.CONFIG.split.rescue*100));
+assert.equal(JSON.stringify(rp.state.accounts),accounts);
+assert.equal(rp.totals().cents,rp.state.tokens.reduce((n,t)=>n+t.rescueCents,0));
+assert.equal(rp.rescueStats('paws').cents,rp.supporting('paws').reduce((n,t)=>n+t.rescueCents,0));
+const t=rp.token('biscuit');t.graduationProgress=99.99;const amount=t.rescueCents;
+assert.ok(rp.advanceGraduation().includes(t.id));assert.equal(rp.graduation(t),100);assert.ok(t.graduatedAt);assert.ok(t.rescueCents>amount);const graduatedFees=t.rescueCents;
+const time=t.graduatedAt;rp.advanceGraduation();assert.equal(t.graduatedAt,time);assert.equal(t.rescueCents,graduatedFees);assert.equal(rp.state.activity.filter(a=>a.type==='graduation').length,1);
+t.mc=1000;assert.equal(rp.graduation(t),100);rp.save();rp=load();assert.equal(rp.graduation(rp.token('biscuit')),100);assert.equal(rp.token('biscuit').graduatedAt,time);
+const before=JSON.stringify(rp.state);fail=true;assert.throws(()=>rp.advanceGraduation(),/database/);assert.equal(JSON.stringify(rp.state),before);
+console.log('PASS: every meme advances, 100% cap, one-time graduation, linked fee/volume/trade accounting, no backward progress, persistence and storage rollback.');
+if(!process.env.PLAYWRIGHT_MODULE)process.exit(0);
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE);
+(async()=>{
+ const browser=await chromium.launch({headless:true,...(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{})});
+ const context=await browser.newContext({viewport:{width:1440,height:1000}});
+ await context.addInitScript(()=>{window.setInterval=(fn,delay)=>{if(delay===5000)window.__graduationTick=fn;return 0;};});
+ const page=await context.newPage(),errors=[];page.on('pageerror',error=>errors.push(error.message));
+ await page.goto('file://'+path.resolve(__dirname,'../index.html')+'#explore');
+ const bar=page.locator('[data-graduation=biscuit] [role=progressbar]');const initial=Number(await bar.getAttribute('aria-valuenow'));const initialFees=await page.evaluate(()=>RP.token('biscuit').rescueCents);assert.ok(!(await page.locator('body').innerText()).includes('BETA'));
+ await page.evaluate(()=>window.__graduationTick());assert.ok(Number(await bar.getAttribute('aria-valuenow'))>initial);assert.ok(await page.evaluate(()=>RP.token('biscuit').rescueCents)>initialFees);assert.equal(await page.locator('[data-token-card=biscuit] [data-token-fees]').innerText(),await page.evaluate(()=>RP.money(RP.token('biscuit').rescueCents)));
+ await page.locator('#meme-search').fill('biscuit');await page.evaluate(()=>window.__graduationTick());assert.equal(await page.locator('#meme-search').inputValue(),'biscuit');assert.equal(await page.evaluate(()=>document.activeElement.id),'meme-search');
+ await page.evaluate(()=>RP.change(()=>RP.token('biscuit').graduationProgress=99.99));await page.evaluate(()=>window.__graduationTick());
+ const card=page.locator('[data-token-card=biscuit]');assert.ok((await card.getAttribute('class')).includes('graduated'));assert.ok((await card.innerText()).includes('100% · REACHED GRAD'));assert.equal(await card.locator('.card-badge').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(155, 221, 158)');
+ await card.click();const summary=page.locator('.graduation-summary');assert.ok((await summary.innerText()).includes('Reached GRAD.'));assert.ok((await summary.innerText()).includes(await page.evaluate(()=>RP.money(RP.token('biscuit').rescueCents)+' donated')));assert.ok((await summary.innerText()).includes('RESCUE ALLOCATION'));
+ await page.locator('#trade-amount').fill('0.25');await page.evaluate(()=>window.__graduationTick());assert.equal(await page.locator('#trade-amount').inputValue(),'0.25');assert.equal(await page.locator('[data-token-stat=fees]').first().innerText(),await page.evaluate(()=>RP.money(RP.token('biscuit').rescueCents)));assert.equal(await page.evaluate(()=>document.activeElement.id),'trade-amount');
+ await page.screenshot({path:'/tmp/rescuepad-graduated-desktop.png',fullPage:true});
+ await page.reload();assert.ok((await summary.getAttribute('class')).includes('graduated'));
+ for(const width of [390,320]){await page.setViewportSize({width,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth),width);await page.evaluate(()=>location.hash='explore');await page.waitForSelector('[data-token-card=biscuit]');assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth),width);await page.evaluate(()=>location.hash='token/biscuit');await page.waitForSelector('.graduation-summary');}
+ await page.evaluate(()=>location.hash='rescue/paws');await page.waitForSelector('.milestone-panel');await page.evaluate(()=>window.__graduationTick());assert.equal(await page.locator('.milestone-progress').getAttribute('data-allocation-cents'),String(await page.evaluate(()=>RP.rescueStats('paws').cents)));
+ await page.screenshot({path:'/tmp/rescuepad-graduated-mobile.png',fullPage:true});
+ assert.deepEqual(errors,[]);await browser.close();console.log('PASS: live percentage, green completed badge, graduated token detail and donation amount, retained input/focus, refresh persistence and mobile widths.');
+})().catch(error=>{console.error(error);process.exit(1);});

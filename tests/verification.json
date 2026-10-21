@@ -1,0 +1,24 @@
+{
+  "checks": [
+    "Populated homepage with consistent early-platform statistics",
+    "Wallet approval, refresh session clearing and profile persistence",
+    "Copy, disconnect and reconnect with all three injected providers",
+    "Connected profile and empty-state actions",
+    "All shelter country filters",
+    "Eight shelter profiles and official website links",
+    "Four-step launch, image upload, saved draft, selection change, fee configuration and simulated launch",
+    "Launch navigation returns to a fresh form after success",
+    "New token appears in discovery and profile; search and all discovery sorts",
+    "Buy updates SOL, holdings, chart, market cap, volume, trades and rescue fees",
+    "Insufficient-balance protection, sell accounting and Sell Max",
+    "Shelter totals, leaderboard and activity agree; trades and uploaded images persist",
+    "Chart ranges, contract copy, docs and social placeholder explanation",
+    "Every page fits 390px and 320px mobile viewports",
+    "Live anonymous activity updates the shared data and visible feed",
+    "Original images load, Escape closes dialog, Reset demo restores all baseline data",
+    "Direct file opening works without a server or build process",
+    "No uncaught browser JavaScript errors"
+  ],
+  "errors": [],
+  "walletProtocol": "Passed: Wallet Standard discovery, approval/rejection, account events, separate profiles, saved memes, balance retry and repository subpaths. Tested with isolated provider fixtures."
+}
